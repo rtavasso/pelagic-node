@@ -66,9 +66,17 @@ def get_data_loaders():
     return train_loader, val_loader, train_dataset.class_to_idx
 
 
-def create_model():
+def create_model(use_pretrained: bool = True):
     """Create MobileNetV2 model modified for 3 classes."""
-    model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+    if use_pretrained:
+        try:
+            model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+        except Exception as e:
+            print(f"Warning: Could not load pretrained weights ({e})")
+            print("Training from scratch instead.")
+            model = models.mobilenet_v2(weights=None)
+    else:
+        model = models.mobilenet_v2(weights=None)
 
     # Modify classifier for 3 classes
     # Original: classifier[1] = Linear(1280, 1000)
