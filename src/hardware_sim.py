@@ -218,26 +218,16 @@ class AudioEnvironment:
             return chunk
 
         elif remaining > 0:
-            # Partial chunk - may need to span files
+            # Partial chunk from the end of the current file.
+            # Spec: zero-pad the remainder to a full tick and treat as its own chunk.
             chunk = self._current_data[self._file_position:].copy()
             self._file_position = len(self._current_data)
 
-            # Try to get more from next file
-            if self._load_next_file():
-                needed = CHUNK_SAMPLES - len(chunk)
-                if len(self._current_data) >= needed:
-                    chunk = np.concatenate([chunk, self._current_data[:needed]])
-                    self._file_position = needed
-                else:
-                    # Next file is also short - take what we can and pad
-                    chunk = np.concatenate([chunk, self._current_data])
-                    self._file_position = len(self._current_data)
-                    if len(chunk) < CHUNK_SAMPLES:
-                        chunk = np.pad(chunk, (0, CHUNK_SAMPLES - len(chunk)))
-            else:
-                # No more files - zero-pad final chunk
+            if len(chunk) < CHUNK_SAMPLES:
                 chunk = np.pad(chunk, (0, CHUNK_SAMPLES - len(chunk)))
 
+            # Do NOT pull data from the next file here; the next tick will read it.
+            # Mark current file exhausted; next call will load the next file if present.
             return chunk.astype(np.float32)
 
         else:

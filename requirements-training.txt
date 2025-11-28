@@ -3,3 +3,6 @@ torchaudio
 torchvision
 matplotlib
 Pillow
+onnx
+onnxruntime
+onnxscript

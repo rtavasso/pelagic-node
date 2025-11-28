@@ -12,20 +12,24 @@ from pathlib import Path
 
 # Add src to path for config import
 sys.path.insert(0, str(Path(__file__).parent / "src"))
+if hasattr(sys.stdout, "reconfigure"):
+    # Ensure UTF-8 so torch.onnx logging symbols do not break Windows terminals
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, models
-
+from torchvision import datasets, models, transforms
+import onnx
 
 # --- CONFIGURATION ---
 TRAIN_DIR = Path("./data/processed_spectrograms/train")
 VAL_DIR = Path("./data/processed_spectrograms/val")
 MODEL_OUTPUT = Path("./models/classifier.onnx")
 NUM_CLASSES = 3
-NUM_EPOCHS = 5
+NUM_EPOCHS = 1
 BATCH_SIZE = 16
 LEARNING_RATE = 0.001
 IMAGE_SIZE = 224
@@ -37,15 +41,13 @@ def get_data_loaders():
     train_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
         transforms.RandomHorizontalFlip(p=0.3),  # Time reversal augmentation
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        transforms.ToTensor(),  # Keep [0,1] to match inference pipeline
     ])
 
     # No augmentation for validation
     val_transform = transforms.Compose([
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+        transforms.ToTensor(),  # Keep [0,1] to match inference pipeline
     ])
 
     train_dataset = datasets.ImageFolder(root=TRAIN_DIR, transform=train_transform)
@@ -140,27 +142,55 @@ def export_to_onnx(model, device):
 
     # Create dummy input matching expected shape: [1, 3, 224, 224]
     dummy_input = torch.randn(1, 3, IMAGE_SIZE, IMAGE_SIZE).to(device)
+    dynamic_shapes = {
+        "x": {0: "batch_size"},
+    }
 
     # Ensure output directory exists
     MODEL_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 
-    # Export with dynamic batch size
+    # Export with dynamic batch size using a modern opset to avoid legacy conversion
     torch.onnx.export(
         model,
         dummy_input,
         MODEL_OUTPUT,
         export_params=True,
-        opset_version=11,
+        opset_version=18,
         do_constant_folding=True,
         input_names=['input'],
         output_names=['output'],
-        dynamic_axes={
-            'input': {0: 'batch_size'},
-            'output': {0: 'batch_size'}
-        }
+        dynamic_shapes=dynamic_shapes,
     )
 
+    # Strip value_info entries for initializers so onnxruntime quantizer
+    # can transpose GEMM weights without conflicting shape metadata.
+    onnx_model = onnx.load(MODEL_OUTPUT.as_posix())
+    initializer_names = {init.name for init in onnx_model.graph.initializer}
+    original_vi_len = len(onnx_model.graph.value_info)
+    filtered_vi = [vi for vi in onnx_model.graph.value_info if vi.name not in initializer_names]
+    if len(filtered_vi) != original_vi_len:
+        onnx_model.graph.ClearField("value_info")
+        onnx_model.graph.value_info.extend(filtered_vi)
+        onnx.save_model(onnx_model, MODEL_OUTPUT.as_posix())
+
     print(f"Model exported to: {MODEL_OUTPUT}")
+
+    # Optional: quantize to INT8 for edge deployment
+    try:
+        from onnxruntime.quantization import QuantType, quantize_dynamic
+
+        quantized_path = MODEL_OUTPUT
+        tmp_quant_path = MODEL_OUTPUT.with_name(MODEL_OUTPUT.stem + "_quant.onnx")
+        quantize_dynamic(
+            model_input=str(MODEL_OUTPUT),
+            model_output=str(tmp_quant_path),
+            weight_type=QuantType.QInt8,
+        )
+        # Replace original with quantized version
+        tmp_quant_path.replace(quantized_path)
+        print(f"Quantized model saved to: {quantized_path}")
+    except Exception as e:
+        print(f"Warning: Quantization skipped or failed: {e}")
 
 
 def main():

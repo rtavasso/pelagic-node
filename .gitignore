@@ -38,7 +38,7 @@ data/processed_spectrograms/train/*
 data/processed_spectrograms/val/*
 data/sim_input/*
 logs/*.jsonl
-models/*.onnx
+models/*.onnx*
 
 # Keep directory structure
 !data/raw_synthetic/.gitkeep
@@ -47,3 +47,5 @@ models/*.onnx
 !data/sim_input/.gitkeep
 !logs/.gitkeep
 !models/.gitkeep
+
+.claude/

@@ -146,7 +146,11 @@ def run_simulation() -> None:
 
     # Initialize components
     battery = Battery()
-    env = AudioEnvironment()
+    try:
+        env = AudioEnvironment()
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
     buffer = AudioBuffer()
     engine = InferenceEngine()
     logger = TelemetryLogger()
@@ -224,31 +228,36 @@ def run_simulation() -> None:
             if state == State.INFERENCE:
                 # Generate spectrogram and run model
                 spectrogram = buffer.get_spectrogram()
-                class_id, confidence = engine.run(spectrogram)
-                stats.inference_runs += 1
-
-                # Check detection criteria
-                if confidence >= CONFIDENCE_THRESHOLD and class_id in (1, 2):
-                    # Valid detection
-                    log_detection(logger, tick_count, battery.voltage,
-                                  class_id, confidence, last_rms)
-
-                    if class_id == 1:
-                        stats.vessel_count += 1
-                        print(f"[Tick {tick_count}] VESSEL detected "
-                              f"(conf={confidence:.2f}, rms={last_rms:.3f})")
-                    else:
-                        stats.cetacean_count += 1
-                        print(f"[Tick {tick_count}] CETACEAN detected "
-                              f"(conf={confidence:.2f}, rms={last_rms:.3f})")
-
-                    # Enter TRANSMIT state
-                    buffer.clear()
-                    tx_timer = TX_DURATION_TICKS
-                    state = State.TRANSMIT
-                else:
-                    # No detection - return to listening
+                try:
+                    class_id, confidence = engine.run(spectrogram)
+                    stats.inference_runs += 1
+                except Exception as e:
+                    # Recoverable per spec 7.1: log and continue listening
+                    print(f"[Tick {tick_count}] Inference error: {e}", file=sys.stderr)
                     state = State.LISTENING
+                else:
+                    # Check detection criteria
+                    if confidence >= CONFIDENCE_THRESHOLD and class_id in (1, 2):
+                        # Valid detection
+                        log_detection(logger, tick_count, battery.voltage,
+                                      class_id, confidence, last_rms)
+
+                        if class_id == 1:
+                            stats.vessel_count += 1
+                            print(f"[Tick {tick_count}] VESSEL detected "
+                                  f"(conf={confidence:.2f}, rms={last_rms:.3f})")
+                        else:
+                            stats.cetacean_count += 1
+                            print(f"[Tick {tick_count}] CETACEAN detected "
+                                  f"(conf={confidence:.2f}, rms={last_rms:.3f})")
+
+                        # Enter TRANSMIT state
+                        buffer.clear()
+                        tx_timer = TX_DURATION_TICKS
+                        state = State.TRANSMIT
+                    else:
+                        # No detection - return to listening
+                        state = State.LISTENING
 
             elif state == State.TRANSMIT:
                 tx_timer -= 1
