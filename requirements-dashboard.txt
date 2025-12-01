@@ -1,0 +1,11 @@
+# Dashboard core
+streamlit>=1.28.0,<2.0.0
+plotly>=5.18.0,<6.0.0
+pandas>=2.0.0,<3.0.0
+
+# Already in main requirements.txt (shared with simulation)
+# numpy - version from requirements.txt
+# librosa - version from requirements.txt
+# soundfile - version from requirements.txt
+
+# Note: watchdog not needed - using simple file polling instead
